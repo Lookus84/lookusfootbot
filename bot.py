@@ -7,9 +7,9 @@ def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
         "Привет! Я бот для записи на футбол.\n"
         "Команды:\n"
-        "/запись - записаться\n"
-        "/список - список игроков\n"
-        "/сброс - очистить список"
+        "/signup - записаться\n"
+        "/list - список игроков\n"
+        "/reset - очистить список"
     )
 
 def add_player(update: Update, context: CallbackContext) -> None:
@@ -33,14 +33,14 @@ def reset_players(update: Update, context: CallbackContext) -> None:
     update.message.reply_text("Список очищен!")
 
 def main():
-    TOKEN = "7994041571:AAF-hoI9hyTIj__S7Ac5_PIpOq9BfC3SUqk"  # <- Твой токен
+    TOKEN = "7994041571:AAF-hoI9hyTIj__S7Ac5_PIpOq9BfC3SUqk"  # Твой токен
     updater = Updater(TOKEN)
     dispatcher = updater.dispatcher
 
     dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("запись", add_player))
-    dispatcher.add_handler(CommandHandler("список", show_players))
-    dispatcher.add_handler(CommandHandler("сброс", reset_players))
+    dispatcher.add_handler(CommandHandler("signup", add_player))  # Было /запись
+    dispatcher.add_handler(CommandHandler("list", show_players))  # Было /список
+    dispatcher.add_handler(CommandHandler("reset", reset_players))  # Было /сброс
 
     updater.start_polling()
     updater.idle()
