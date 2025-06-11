@@ -1,41 +1,37 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler, PersistenceInput
 import os
 import pickle
-from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
 
-# Настройки persistence (сохранение состояния)
-class FilePersistence:
-    def __init__(self, filename='bot_data.pkl'):
-        self.filename = filename
+class BotDatabase:
+    def __init__(self):
+        self.data_file = 'football_bot_data.pkl'
+        self.data = self.load_data()
+    
+    def load_data(self):
         try:
-            with open(filename, 'rb') as f:
-                self.data = pickle.load(f)
+            with open(self.data_file, 'rb') as f:
+                return pickle.load(f)
         except (FileNotFoundError, EOFError):
-            self.data = {
-                'user_data': {},
-                'chat_data': {},
-                'bot_data': {
-                    'playing': [],
-                    'not_playing': [],
-                    'maybe': [],
-                    'last_notification': 0
-                }
+            return {
+                'playing': [],
+                'not_playing': [],
+                'maybe': [],
+                'last_notification': 0,
+                'all_users': set()
             }
-
-    def flush(self):
-        with open(self.filename, 'wb') as f:
+    
+    def save_data(self):
+        with open(self.data_file, 'wb') as f:
             pickle.dump(self.data, f)
 
-persistence = FilePersistence()
-
-def get_players():
-    return persistence.data['bot_data']
-
-def save_players():
-    persistence.flush()
+db = BotDatabase()
 
 def start(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    db.data['all_users'].add(user.id)
+    db.save_data()
+    
     keyboard = [
         [InlineKeyboardButton("✅ Играю!", callback_data='play')],
         [InlineKeyboardButton("❌ Не играю", callback_data='cancel')],
@@ -51,34 +47,34 @@ def start(update: Update, context: CallbackContext) -> None:
 
 def button_click(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
-    user = query.from_user
+    user = update.effective_user
     action = query.data
-    players = get_players()
-
+    
     # Удаляем пользователя из всех списков
     for status in ['playing', 'not_playing', 'maybe']:
-        players[status] = [u for u in players[status] if u['id'] != user.id]
-
+        if user.id in db.data[status]:
+            db.data[status].remove(user.id)
+    
     if action == 'play':
-        players['playing'].append({'id': user.id, 'name': user.first_name})
+        db.data['playing'].append(user.id)
         query.answer("Ты в игре! ✅")
     elif action == 'cancel':
-        players['not_playing'].append({'id': user.id, 'name': user.first_name})
+        db.data['not_playing'].append(user.id)
         query.answer("Жаль, но ты выбыл ❌")
     elif action == 'maybe':
-        players['maybe'].append({'id': user.id, 'name': user.first_name})
+        db.data['maybe'].append(user.id)
         query.answer("Ждём решения 🤔")
     elif action == 'stats':
         query.message.reply_text(
             get_stats_text(),
             parse_mode='Markdown'
         )
-        save_players()
+        db.save_data()
         return
-
-    save_players()
+    
+    db.save_data()
     check_notifications(update, context)
-
+    
     # Обновляем меню
     keyboard = [
         [InlineKeyboardButton("✅ Играю!", callback_data='play')],
@@ -94,37 +90,32 @@ def button_click(update: Update, context: CallbackContext) -> None:
     )
 
 def check_notifications(update: Update, context: CallbackContext):
-    players = get_players()
-    playing_count = len(players['playing'])
+    playing_count = len(db.data['playing'])
     chat_id = update.effective_chat.id
 
-    if playing_count >= 15 and players['last_notification'] != 15:
+    if playing_count >= 15 and db.data['last_notification'] != 15:
         context.bot.send_message(
             chat_id=chat_id,
             text="🔥 *15 человек!!! Играем в три команды по 5!*",
             parse_mode='Markdown'
         )
-        players['last_notification'] = 15
-        save_players()
-    elif playing_count >= 12 and players['last_notification'] not in (12, 15):
+        db.data['last_notification'] = 15
+        db.save_data()
+    elif playing_count >= 12 and db.data['last_notification'] not in (12, 15):
         context.bot.send_message(
             chat_id=chat_id,
             text="⚡ *Набралось 12 человек! Играем в две команды по 6!*",
             parse_mode='Markdown'
         )
-        players['last_notification'] = 12
-        save_players()
+        db.data['last_notification'] = 12
+        db.save_data()
 
 def get_stats_text():
-    players = get_players()
-    playing = len(players['playing'])
-    not_playing = len(players['not_playing'])
-    maybe = len(players['maybe'])
+    playing = len(db.data['playing'])
+    not_playing = len(db.data['not_playing'])
+    maybe = len(db.data['maybe'])
+    ignored = len(db.data['all_users']) - playing - not_playing - maybe
     
-    # Подсчет "игнорирующих" (все кто писал /start но не выбрал статус)
-    all_users = set(u['id'] for u in players['playing'] + players['not_playing'] + players['maybe'])
-    ignored = len(persistence.data['user_data']) - len(all_users) if persistence.data['user_data'] else 0
-
     return (
         "📊 *Статистика:*\n\n"
         f"✅ Играют: *{playing}*\n"
