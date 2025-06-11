@@ -2,7 +2,7 @@ import os
 import pickle
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Conflict
 
 class BotDatabase:
     def __init__(self):
@@ -29,26 +29,27 @@ class BotDatabase:
 db = BotDatabase()
 
 def start(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    db.data['all_users'].add(user.id)
-    db.save_data()
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Играю!", callback_data='play')],
-        [InlineKeyboardButton("❌ Не играю", callback_data='cancel')],
-        [InlineKeyboardButton("❓ Под вопросом", callback_data='maybe')],
-        [InlineKeyboardButton("📊 Статистика", callback_data='stats')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     try:
+        user = update.effective_user
+        if user:
+            db.data['all_users'].add(user.id)
+            db.save_data()
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Играю!", callback_data='play')],
+            [InlineKeyboardButton("❌ Не играю", callback_data='cancel')],
+            [InlineKeyboardButton("❓ Под вопросом", callback_data='maybe')],
+            [InlineKeyboardButton("📊 Статистика", callback_data='stats')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         if update.message:
             update.message.reply_text(
                 "⚽ *Футбольный бот* ⚽\nВыбери действие:",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
-        else:
+        elif update.callback_query:
             update.callback_query.message.reply_text(
                 "⚽ *Футбольный бот* ⚽\nВыбери действие:",
                 reply_markup=reply_markup,
@@ -58,11 +59,20 @@ def start(update: Update, context: CallbackContext) -> None:
         print(f"Error in start: {e}")
 
 def button_click(update: Update, context: CallbackContext) -> None:
+    if not update.callback_query:
+        return
+        
     query = update.callback_query
     user = update.effective_user
-    action = query.data
     
     try:
+        query.answer()
+        
+        if not user:
+            return
+
+        action = query.data
+        
         # Удаляем пользователя из всех списков
         for status in ['playing', 'not_playing', 'maybe']:
             if user.id in db.data[status]:
@@ -78,10 +88,13 @@ def button_click(update: Update, context: CallbackContext) -> None:
             db.data['maybe'].append(user.id)
             query.answer("Ждём решения 🤔")
         elif action == 'stats':
-            query.message.reply_text(
-                get_stats_text(),
-                parse_mode='Markdown'
-            )
+            try:
+                query.message.reply_text(
+                    get_stats_text(),
+                    parse_mode='Markdown'
+                )
+            except BadRequest:
+                pass
             db.save_data()
             return
         
@@ -105,10 +118,15 @@ def button_click(update: Update, context: CallbackContext) -> None:
             )
         except BadRequest as e:
             if "Message is not modified" not in str(e):
-                raise
+                print(f"Error editing message: {e}")
+    except Conflict:
+        print("Conflict error - another instance is running")
     except Exception as e:
         print(f"Error in button_click: {e}")
-        query.answer("Произошла ошибка, попробуйте ещё раз")
+        try:
+            query.answer("Произошла ошибка, попробуйте ещё раз")
+        except:
+            pass
 
 def check_notifications(update: Update, context: CallbackContext):
     try:
@@ -152,22 +170,47 @@ def get_stats_text():
         print(f"Error in get_stats_text: {e}")
         return "Не удалось получить статистику"
 
-def error_handler(update: Update, context: CallbackContext):
-    print(f"Update {update} caused error {context.error}")
-    if update.callback_query:
-        update.callback_query.answer("Произошла ошибка, попробуйте ещё раз")
+def error_handler(update: object, context: CallbackContext):
+    try:
+        error = str(context.error)
+        print(f"Error: {error}")
+        
+        if isinstance(update, Update):
+            if update.callback_query:
+                try:
+                    update.callback_query.answer("Произошла ошибка, попробуйте ещё раз")
+                except:
+                    pass
+            elif update.message:
+                try:
+                    update.message.reply_text("Произошла ошибка, попробуйте ещё раз")
+                except:
+                    pass
+    except Exception as e:
+        print(f"Error in error_handler: {e}")
 
 def main():
     TOKEN = os.getenv('TOKEN', '7994041571:AAF-hoI9hyTIj__S7Ac5_PIpOq9BfC3SUqk')
-    updater = Updater(TOKEN)
-    dispatcher = updater.dispatcher
+    
+    try:
+        updater = Updater(TOKEN)
+        dispatcher = updater.dispatcher
 
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CallbackQueryHandler(button_click))
-    dispatcher.add_error_handler(error_handler)
+        dispatcher.add_handler(CommandHandler("start", start))
+        dispatcher.add_handler(CallbackQueryHandler(button_click))
+        dispatcher.add_error_handler(error_handler)
 
-    updater.start_polling()
-    updater.idle()
+        print("Bot started polling...")
+        updater.start_polling(
+            drop_pending_updates=True,
+            timeout=30,
+            read_latency=5
+        )
+        updater.idle()
+    except Conflict:
+        print("Another bot instance is already running")
+    except Exception as e:
+        print(f"Failed to start bot: {e}")
 
 if __name__ == "__main__":
     main()
