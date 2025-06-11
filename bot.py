@@ -65,7 +65,7 @@ def button_click(update: Update, context: CallbackContext) -> None:
 
     action = query.data
     
-    # Удаляем пользователя из всех списков
+    # Обновляем статус пользователя
     for status in ['playing', 'not_playing', 'maybe']:
         if user.id in db.data[status]:
             db.data[status].remove(user.id)
@@ -150,13 +150,13 @@ def main():
         dispatcher.add_handler(CommandHandler("start", start))
         dispatcher.add_handler(CallbackQueryHandler(button_click))
 
-        print("Starting bot with clean polling...")
+        print("Starting bot with polling...")
         updater.start_polling(
             drop_pending_updates=True,
             timeout=20,
-            read_latency=4,
-            clean=True
+            read_latency=4
         )
+        print("Bot is now running!")
         updater.idle()
     except Conflict:
         print("Another instance is already running. Exiting.")
