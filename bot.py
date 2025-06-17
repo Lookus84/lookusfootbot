@@ -158,13 +158,28 @@ def main():
 
     application = Application.builder().token(TOKEN).build()
 
+    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
+    # Обработка ошибок
+    application.add_error_handler(lambda update, context: print(f"Ошибка: {context.error}"))
+
     print("Бот запускается...")
-    application.run_polling()
-    print("Бот успешно запущен!")
+    
+    try:
+        # Указываем параметры polling для избежания конфликтов
+        application.run_polling(
+            close_loop=False,
+            stop_signals=None,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True
+        )
+    except Exception as e:
+        print(f"Фатальная ошибка: {e}")
+        # Принудительно завершаем процесс при конфликте
+        os._exit(1)
 
 if __name__ == "__main__":
     main()
