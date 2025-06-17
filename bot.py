@@ -20,9 +20,10 @@ class BotDatabase:
             with open(self.data_file, 'rb') as f:
                 return pickle.load(f)
         except (FileNotFoundError, EOFError):
+            # Инициализируем все возможные статусы
             return {
-                'playing': set(),
-                'not_playing': set(),
+                'play': set(),       # Изменили 'playing' на 'play'
+                'cancel': set(),     # Изменили 'not_playing' на 'cancel'
                 'maybe': set(),
                 'last_notification': 0,
                 'all_users': set()
@@ -48,18 +49,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if update.message:
-        await update.message.reply_text(
-            "⚽ *Футбольный бот* ⚽\nВыбери действие:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    elif update.callback_query:
-        await update.callback_query.edit_message_text(
-            "⚽ *Футбольный бот* ⚽\nВыбери действие:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+    try:
+        if update.message:
+            await update.message.reply_text(
+                "⚽ *Футбольный бот* ⚽\nВыбери действие:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                "⚽ *Футбольный бот* ⚽\nВыбери действие:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+    except Exception as e:
+        print(f"Ошибка в start: {e}")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -70,68 +74,90 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     action = query.data
-    if action in ['play', 'cancel', 'maybe']:
-        # Очищаем предыдущий статус
-        for status in ['playing', 'not_playing', 'maybe']:
-            if user.id in db.data[status]:
-                db.data[status].remove(user.id)
-        
-        # Устанавливаем новый статус
-        db.data[action].add(user.id)
-        await query.answer(f"Статус обновлен: {'✅ Играю' if action == 'play' else '❌ Не играю' if action == 'cancel' else '❓ Под вопросом'}")
-    elif action == 'stats':
-        await query.edit_message_text(
-            text=get_stats_text(),
-            parse_mode='Markdown'
-        )
     
-    db.save_data()
-    await check_notifications(update, context)
-    await start(update, context)  # Обновляем интерфейс
+    try:
+        if action in ['play', 'cancel', 'maybe']:
+            # Очищаем предыдущий статус
+            for status in ['play', 'cancel', 'maybe']:
+                db.data[status].discard(user.id)
+            
+            # Устанавливаем новый статус
+            db.data[action].add(user.id)
+            db.save_data()
+            
+            # Ответ пользователю
+            responses = {
+                'play': "✅ Вы записаны на игру!",
+                'cancel': "❌ Вы отказались от игры",
+                'maybe': "❓ Вы под вопросом"
+            }
+            await query.answer(responses[action])
+            
+            # Проверка уведомлений
+            await check_notifications(update, context)
+            
+            # Обновляем интерфейс
+            await start(update, context)
+            
+        elif action == 'stats':
+            await query.edit_message_text(
+                text=get_stats_text(),
+                parse_mode='Markdown'
+            )
+    except Exception as e:
+        print(f"Ошибка в handle_callback: {e}")
+        await query.answer("⚠️ Произошла ошибка, попробуйте позже")
 
 async def check_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    playing_count = len(db.data['playing'])
-    chat_id = update.effective_chat.id
+    try:
+        playing_count = len(db.data['play'])
+        chat_id = update.effective_chat.id
 
-    if playing_count >= 15 and db.data['last_notification'] != 15:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="🔥 *15 человек!!! Играем в три команды по 5!*",
-            parse_mode='Markdown'
-        )
-        db.data['last_notification'] = 15
-    elif playing_count >= 12 and db.data['last_notification'] not in (12, 15):
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚡ *Набралось 12 человек! Играем в две команды по 6!*",
-            parse_mode='Markdown'
-        )
-        db.data['last_notification'] = 12
-    
-    db.save_data()
+        if playing_count >= 15 and db.data['last_notification'] != 15:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="🔥 *15 человек!!! Играем в три команды по 5!*",
+                parse_mode='Markdown'
+            )
+            db.data['last_notification'] = 15
+            db.save_data()
+        elif playing_count >= 12 and db.data['last_notification'] not in (12, 15):
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚡ *Набралось 12 человек! Играем в две команды по 6!*",
+                parse_mode='Markdown'
+            )
+            db.data['last_notification'] = 12
+            db.save_data()
+    except Exception as e:
+        print(f"Ошибка в check_notifications: {e}")
 
 def get_stats_text():
-    playing = len(db.data['playing'])
-    not_playing = len(db.data['not_playing'])
-    maybe = len(db.data['maybe'])
-    ignored = len(db.data['all_users']) - playing - not_playing - maybe
-    
-    return (
-        "📊 *Статистика:*\n\n"
-        f"✅ Играют: *{playing}*\n"
-        f"❌ Отказались: *{not_playing}*\n"
-        f"❓ Под вопросом: *{maybe}*\n"
-        f"🤷 Не ответили: *{ignored if ignored > 0 else 0}*"
-    )
+    try:
+        playing = len(db.data['play'])
+        not_playing = len(db.data['cancel'])
+        maybe = len(db.data['maybe'])
+        ignored = len(db.data['all_users']) - playing - not_playing - maybe
+        
+        return (
+            "📊 *Статистика:*\n\n"
+            f"✅ Играют: *{playing}*\n"
+            f"❌ Отказались: *{not_playing}*\n"
+            f"❓ Под вопросом: *{maybe}*\n"
+            f"🤷 Не ответили: *{ignored if ignored > 0 else 0}*"
+        )
+    except Exception as e:
+        print(f"Ошибка в get_stats_text: {e}")
+        return "⚠️ Не удалось получить статистику"
 
 def main():
     TOKEN = os.getenv('TELEGRAM_TOKEN')
     if not TOKEN:
         print("❌ Ошибка: Не задан TELEGRAM_TOKEN!")
-        print("Добавьте переменную окружения TELEGRAM_TOKEN в настройках Render")
         exit(1)
 
     application = Application.builder().token(TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
