@@ -1,7 +1,10 @@
 import os
 import pickle
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
+from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler, MessageHandler, Filters
+from flask import Flask, request
+
+app = Flask(__name__)
 
 class BotDatabase:
     def __init__(self):
@@ -58,29 +61,28 @@ def handle_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user = update.effective_user
     
-    # Обязательно отвечаем на callback
     query.answer()
     
     if not user:
         return
 
-    # Очищаем предыдущий статус
-    for status in ['playing', 'not_playing', 'maybe']:
-        if user.id in db.data[status]:
-            db.data[status].remove(user.id)
-    
-    # Обрабатываем действие
     if query.data == 'play':
+        db.data['not_playing'].discard(user.id)
+        db.data['maybe'].discard(user.id)
         db.data['playing'].add(user.id)
         query.answer("Вы записаны на игру! ✅")
     elif query.data == 'cancel':
+        db.data['playing'].discard(user.id)
+        db.data['maybe'].discard(user.id)
         db.data['not_playing'].add(user.id)
         query.answer("Вы отказались от игры ❌")
     elif query.data == 'maybe':
+        db.data['playing'].discard(user.id)
+        db.data['not_playing'].discard(user.id)
         db.data['maybe'].add(user.id)
         query.answer("Вы под вопросом 🤔")
     elif query.data == 'stats':
-        query.message.reply_text(
+        query.edit_message_text(
             get_stats_text(),
             parse_mode='Markdown'
         )
@@ -90,7 +92,6 @@ def handle_callback(update: Update, context: CallbackContext) -> None:
     db.save_data()
     check_notifications(update, context)
     
-    # Обновляем сообщение с кнопками
     keyboard = [
         [InlineKeyboardButton("✅ Играю!", callback_data='play')],
         [InlineKeyboardButton("❌ Не играю", callback_data='cancel')],
@@ -105,8 +106,8 @@ def handle_callback(update: Update, context: CallbackContext) -> None:
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-    except:
-        pass
+    except Exception as e:
+        print(f"Error editing message: {e}")
 
 def check_notifications(update: Update, context: CallbackContext):
     playing_count = len(db.data['playing'])
@@ -143,23 +144,40 @@ def get_stats_text():
         f"🤷 Не ответили: *{ignored if ignored > 0 else 0}*"
     )
 
+@app.route('/')
+def home():
+    return "Футбольный бот работает!"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), updater.bot)
+    dispatcher.process_update(update)
+    return 'ok'
+
 def main():
-    TOKEN = os.getenv('TOKEN', '7994041571:AAF-hoI9hyTIj__S7Ac5_PIpOq9BfC3SUqk')
+    global updater, dispatcher
     
+    TOKEN = os.getenv('TELEGRAM_TOKEN')
+    WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Например: https://your-bot-name.onrender.com/webhook
+
     updater = Updater(TOKEN, use_context=True)
     dispatcher = updater.dispatcher
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CallbackQueryHandler(handle_callback))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, start))
 
-    print("Бот запускается...")
-    updater.start_polling(
-        drop_pending_updates=True,
-        timeout=30,
-        read_latency=5
-    )
-    print("Бот успешно запущен!")
-    updater.idle()
+    if WEBHOOK_URL:
+        updater.start_webhook(
+            listen="0.0.0.0",
+            port=int(os.getenv('PORT', 5000)),
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+        )
+        print("Бот запущен в режиме webhook")
+    else:
+        updater.start_polling()
+        print("Бот запущен в режиме polling")
 
 if __name__ == "__main__":
     main()
