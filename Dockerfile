@@ -7,8 +7,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Убедимся, что контейнер завершается при ошибках
-ENV PYTHONUNBUFFERED=1
-STOPSIGNAL SIGINT
+# Добавляем healthcheck
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD curl -f http://localhost:8080/ || exit 1
+
+EXPOSE 8080
 
 CMD ["python", "bot.py"]
