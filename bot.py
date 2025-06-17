@@ -2,13 +2,10 @@ import os
 import pickle
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler, MessageHandler, Filters
-from flask import Flask, request
-
-app = Flask(__name__)
 
 class BotDatabase:
     def __init__(self):
-        self.data_file = 'football_bot_data.pkl'
+        self.data_file = '/tmp/football_bot_data.pkl'  # Изменили путь для Render
         self.data = self.load_data()
     
     def load_data(self):
@@ -144,22 +141,9 @@ def get_stats_text():
         f"🤷 Не ответили: *{ignored if ignored > 0 else 0}*"
     )
 
-@app.route('/')
-def home():
-    return "Футбольный бот работает!"
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), updater.bot)
-    dispatcher.process_update(update)
-    return 'ok'
-
 def main():
-    global updater, dispatcher
-    
     TOKEN = os.getenv('TELEGRAM_TOKEN')
-    WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Например: https://your-bot-name.onrender.com/webhook
-
+    
     updater = Updater(TOKEN, use_context=True)
     dispatcher = updater.dispatcher
 
@@ -167,17 +151,14 @@ def main():
     dispatcher.add_handler(CallbackQueryHandler(handle_callback))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, start))
 
-    if WEBHOOK_URL:
-        updater.start_webhook(
-            listen="0.0.0.0",
-            port=int(os.getenv('PORT', 5000)),
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-        )
-        print("Бот запущен в режиме webhook")
-    else:
-        updater.start_polling()
-        print("Бот запущен в режиме polling")
+    print("Бот запускается...")
+    updater.start_polling(
+        drop_pending_updates=True,
+        timeout=30,
+        read_latency=5
+    )
+    print("Бот успешно запущен!")
+    updater.idle()
 
 if __name__ == "__main__":
     main()
