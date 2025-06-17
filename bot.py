@@ -1,7 +1,5 @@
 import os
 import pickle
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -36,16 +34,6 @@ class BotDatabase:
 
 db = BotDatabase()
 
-class HealthServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'Bot is alive!')
-
-def run_health_server():
-    server = HTTPServer(('0.0.0.0', 8080), HealthServer)
-    server.serve_forever()
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if user:
@@ -75,55 +63,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    user = update.effective_user
-    
     await query.answer()
     
+    user = update.effective_user
     if not user:
         return
 
-    if query.data == 'play':
-        db.data['not_playing'].discard(user.id)
-        db.data['maybe'].discard(user.id)
-        db.data['playing'].add(user.id)
-        await query.answer("Вы записаны на игру! ✅")
-    elif query.data == 'cancel':
-        db.data['playing'].discard(user.id)
-        db.data['maybe'].discard(user.id)
-        db.data['not_playing'].add(user.id)
-        await query.answer("Вы отказались от игры ❌")
-    elif query.data == 'maybe':
-        db.data['playing'].discard(user.id)
-        db.data['not_playing'].discard(user.id)
-        db.data['maybe'].add(user.id)
-        await query.answer("Вы под вопросом 🤔")
-    elif query.data == 'stats':
+    action = query.data
+    if action in ['play', 'cancel', 'maybe']:
+        # Очищаем предыдущий статус
+        for status in ['playing', 'not_playing', 'maybe']:
+            if user.id in db.data[status]:
+                db.data[status].remove(user.id)
+        
+        # Устанавливаем новый статус
+        db.data[action].add(user.id)
+        await query.answer(f"Статус обновлен: {'✅ Играю' if action == 'play' else '❌ Не играю' if action == 'cancel' else '❓ Под вопросом'}")
+    elif action == 'stats':
         await query.edit_message_text(
-            get_stats_text(),
+            text=get_stats_text(),
             parse_mode='Markdown'
         )
-        db.save_data()
-        return
     
     db.save_data()
     await check_notifications(update, context)
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Играю!", callback_data='play')],
-        [InlineKeyboardButton("❌ Не играю", callback_data='cancel')],
-        [InlineKeyboardButton("❓ Под вопросом", callback_data='maybe')],
-        [InlineKeyboardButton("📊 Статистика", callback_data='stats')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        await query.edit_message_text(
-            "⚽ *Футбольный бот* ⚽\nВыбери действие:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    except Exception as e:
-        print(f"Error editing message: {e}")
+    await start(update, context)  # Обновляем интерфейс
 
 async def check_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
     playing_count = len(db.data['playing'])
@@ -136,7 +100,6 @@ async def check_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode='Markdown'
         )
         db.data['last_notification'] = 15
-        db.save_data()
     elif playing_count >= 12 and db.data['last_notification'] not in (12, 15):
         await context.bot.send_message(
             chat_id=chat_id,
@@ -144,7 +107,8 @@ async def check_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode='Markdown'
         )
         db.data['last_notification'] = 12
-        db.save_data()
+    
+    db.save_data()
 
 def get_stats_text():
     playing = len(db.data['playing'])
@@ -161,12 +125,6 @@ def get_stats_text():
     )
 
 def main():
-    # Запускаем HTTP-сервер в отдельном потоке
-    health_thread = Thread(target=run_health_server)
-    health_thread.daemon = True
-    health_thread.start()
-
-    # Запускаем бота
     TOKEN = os.getenv('TELEGRAM_TOKEN')
     application = Application.builder().token(TOKEN).build()
 
