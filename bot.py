@@ -20,10 +20,9 @@ class BotDatabase:
             with open(self.data_file, 'rb') as f:
                 return pickle.load(f)
         except (FileNotFoundError, EOFError):
-            # Инициализируем все возможные статусы
             return {
-                'play': set(),       # Изменили 'playing' на 'play'
-                'cancel': set(),     # Изменили 'not_playing' на 'cancel'
+                'play': set(),
+                'cancel': set(),
                 'maybe': set(),
                 'last_notification': 0,
                 'all_users': set()
@@ -67,43 +66,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
-    
     user = update.effective_user
+    
+    # Сначала отвечаем на callback
+    feedback_messages = {
+        'play': "✅ Вы записаны на игру!",
+        'cancel': "❌ Вы отказались от игры",
+        'maybe': "❓ Вы под вопросом",
+        'stats': "📊 Статистика обновлена"
+    }
+    await query.answer(feedback_messages.get(query.data, "Действие выполнено"))
+    
     if not user:
         return
 
-    action = query.data
-    
     try:
-        if action in ['play', 'cancel', 'maybe']:
+        if query.data in ['play', 'cancel', 'maybe']:
             # Очищаем предыдущий статус
             for status in ['play', 'cancel', 'maybe']:
                 db.data[status].discard(user.id)
             
             # Устанавливаем новый статус
-            db.data[action].add(user.id)
+            db.data[query.data].add(user.id)
             db.save_data()
-            
-            # Ответ пользователю
-            responses = {
-                'play': "✅ Вы записаны на игру!",
-                'cancel': "❌ Вы отказались от игры",
-                'maybe': "❓ Вы под вопросом"
-            }
-            await query.answer(responses[action])
             
             # Проверка уведомлений
             await check_notifications(update, context)
             
-            # Обновляем интерфейс
-            await start(update, context)
-            
-        elif action == 'stats':
+        elif query.data == 'stats':
             await query.edit_message_text(
                 text=get_stats_text(),
                 parse_mode='Markdown'
             )
+            return
+    
+        # Обновляем интерфейс
+        await start(update, context)
+        
     except Exception as e:
         print(f"Ошибка в handle_callback: {e}")
         await query.answer("⚠️ Произошла ошибка, попробуйте позже")
@@ -158,28 +157,20 @@ def main():
 
     application = Application.builder().token(TOKEN).build()
 
-    # Добавляем обработчики
+    # Обработчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
-    # Обработка ошибок
+    # Обработчик ошибок
     application.add_error_handler(lambda update, context: print(f"Ошибка: {context.error}"))
 
     print("Бот запускается...")
-    
-    try:
-        # Указываем параметры polling для избежания конфликтов
-        application.run_polling(
-            close_loop=False,
-            stop_signals=None,
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
-    except Exception as e:
-        print(f"Фатальная ошибка: {e}")
-        # Принудительно завершаем процесс при конфликте
-        os._exit(1)
+    application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES
+    )
+    print("Бот успешно запущен!")
 
 if __name__ == "__main__":
     main()
