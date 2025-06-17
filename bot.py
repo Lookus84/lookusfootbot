@@ -126,8 +126,12 @@ def get_stats_text():
 
 def main():
     TOKEN = os.getenv('TELEGRAM_TOKEN')
-    application = Application.builder().token(TOKEN).build()
+    if not TOKEN:
+        print("❌ Ошибка: Не задан TELEGRAM_TOKEN!")
+        print("Добавьте переменную окружения TELEGRAM_TOKEN в настройках Render")
+        exit(1)
 
+    application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
