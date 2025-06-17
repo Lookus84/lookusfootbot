@@ -68,12 +68,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     user = update.effective_user
     
-    # Сначала отвечаем на callback
     feedback_messages = {
         'play': "✅ Вы записаны на игру!",
         'cancel': "❌ Вы отказались от игры",
         'maybe': "❓ Вы под вопросом",
-        'stats': "📊 Статистика обновлена"
+        'stats': "📊 Статистика",
+        'list_play': "✅ Список играющих",
+        'list_cancel': "❌ Список отказавшихся",
+        'list_maybe': "❓ Список под вопросом",
+        'back_to_main': "🔙 Возврат в главное меню"
     }
     await query.answer(feedback_messages.get(query.data, "Действие выполнено"))
     
@@ -94,10 +97,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await check_notifications(update, context)
             
         elif query.data == 'stats':
+            # Меню статистики
+            keyboard = [
+                [InlineKeyboardButton("✅ Список играющих", callback_data='list_play')],
+                [InlineKeyboardButton("❌ Список отказавшихся", callback_data='list_cancel')],
+                [InlineKeyboardButton("❓ Список под вопросом", callback_data='list_maybe')],
+                [InlineKeyboardButton("🔙 Назад", callback_data='back_to_main')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 text=get_stats_text(),
+                reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+            return
+            
+        elif query.data.startswith('list_'):
+            # Показываем список пользователей
+            status = query.data.split('_')[1]
+            users_list = await get_users_list(context, status)
+            
+            keyboard = [[InlineKeyboardButton("🔙 Назад к статистике", callback_data='stats')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                text=users_list,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return
+            
+        elif query.data == 'back_to_main':
+            await start(update, context)
             return
     
         # Обновляем интерфейс
@@ -106,6 +138,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         print(f"Ошибка в handle_callback: {e}")
         await query.answer("⚠️ Произошла ошибка, попробуйте позже")
+
+async def get_users_list(context: ContextTypes.DEFAULT_TYPE, status: str) -> str:
+    try:
+        user_ids = db.data.get(status, set())
+        users_list = []
+        
+        for user_id in user_ids:
+            try:
+                user = await context.bot.get_chat(user_id)
+                name = user.first_name or user.username or f"ID: {user_id}"
+                users_list.append(f"• {name}")
+            except Exception as e:
+                print(f"Ошибка получения информации о пользователе {user_id}: {e}")
+                users_list.append(f"• ID: {user_id}")
+        
+        status_names = {
+            'play': "✅ Играют",
+            'cancel': "❌ Отказались",
+            'maybe': "❓ Под вопросом"
+        }
+        
+        if not users_list:
+            return f"{status_names.get(status, 'Пользователи')}:\n\nСписок пуст"
+            
+        return f"{status_names.get(status, 'Пользователи')} ({len(users_list)}):\n\n" + "\n".join(users_list)
+    except Exception as e:
+        print(f"Ошибка в get_users_list: {e}")
+        return "⚠️ Не удалось получить список пользователей"
 
 async def check_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
